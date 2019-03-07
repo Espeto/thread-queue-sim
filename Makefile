@@ -1,6 +1,6 @@
 CC=gcc
 
-CFLAGS=-Wall -Wextra -Werror -O0 -g -std=c11 -pthread
+CFLAGS=-Wall -Wextra -O0 -g -std=c11 -pthread #-Werror para versao final
 LDFLAGS=-lm
 
 .PHONY: all

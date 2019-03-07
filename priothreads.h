@@ -18,6 +18,10 @@ void pt_spawn(unsigned int prioridade, void *(*funcao) (void *), void *parametro
 */
 void pt_yield();
 
+
+/* Espera todas as threads terminarem */
+void pt_barrier();
+
 /* Libera todas as estruturas de dados do escalonador */
 void pt_destroy();
 
