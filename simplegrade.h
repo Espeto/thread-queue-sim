@@ -1,5 +1,5 @@
-#ifndef _SIMPLETEST_H_
-#define _SIMPLETEST_H_
+#ifndef _SIMPLEGRADE_H_
+#define _SIMPLEGRADE_H_
 
 #include <stdio.h>
 #include <stdlib.h>
