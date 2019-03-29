@@ -7,15 +7,15 @@ Declaro que o presente trabalho contém código desenvolvido exclusivamente por 
 
 (Preencha com seus dados)
 
-- Nome completo: 
-- Username do Bitbucket: 
-- Email @inf: 
+- Nome completo: Gilberto Kreisler Franco Neto
+- Username do Bitbucket: gkreisler
+- Email @inf: gkfneto@inf.ufpel.edu.br
 
 ## Descrição
 
-Neste trabalho será desenvolvido uma biblioteca de threads de nível de usuário com prioridades. O usuário poderá criar threads com diferentes prioridades (onde 1 é a maior prioridade). O escalonamento é por prioridades com filas FCFS para cada prioridade. 
+Neste trabalho será desenvolvido uma biblioteca de threads de nível de usuário com prioridades. O usuário poderá criar threads com diferentes prioridades (onde 1 é a maior prioridade). O escalonamento é por prioridades com filas FCFS para cada prioridade.
 
-O usuário define o número de processadores virtuais (threads de sistema) que serão usados. 
+O usuário define o número de processadores virtuais (threads de sistema) que serão usados.
 
 Os eventos que podem gerar o escalonamento de uma thread são:
 
