@@ -7,33 +7,35 @@
 
 /* adicione o que for preciso para uma thread ter prioridade e ficar bloqueada esperando sua vez de executar */
 typedef struct {
+	long thread_id;
 	unsigned int prioridade;
-	int estado;
+	int yeld;
 	void *(*funcao) (void *);
 	void *parametros;
 
 } pt_thread_ctx;
 
 /* Recomendo declarar tipos e estruturas internas aqui. */
-#define NUM_FILA 8
+#define MAX_POS 8
 
 typedef struct {
-	void *(*funcao) (void *);
+} pt_thread_processor;
 
-} Processor;
+pthread_cond_t queue_cond[MAX_POS];
+int is_empty[MAX_POS];
+pthread_mutex_t threads_per_queue_mutex[MAX_POS];
+int threads_per_queue[MAX_POS];
 
-typedef struct {
-	pt_thread_ctx thread_pcb;
-	pt_thread_ctx *next;
-} Node;
+unsigned int total_processors;
 
-typedef struct {
-	Node *head;
-	Node *tail;
-} Queue;
+pthread_mutex_t inuse_processors_mutex;
+pthread_cond_t inuse_processors_cond;
+unsigned int inuse_processors_count;
 
-Queue **queues;
-Processor *processors;
+pthread_mutex_t total_threads_mutex;
+unsigned int total_threads_count;
+
+pthread_t schedler_thread;
 
 /* Reinicializa o escalonador. Descarta todo o estado interno atual (limpa filas) e
    define o número de processadores virtuais entre 1 e 8. Default é 1 processador.
@@ -41,54 +43,41 @@ Processor *processors;
 */
 void pt_init(unsigned int processadores){
 
+	pthread_att_destroy();
+	pthread_mutex_destroy();
+	pthread_cond_destroy();
+
 	if(processadores > 1 && processadores <= 8) {
-		processors = (Processor*) malloc(processadores * sizeof(Processor));
+		total_processors = processadores;
 	}
 	else {
-		processors = (Processor*) malloc(processadores * sizeof(Processor));
+		total_processors = 1;
 	}
 
-	if(processors == NULL) {
-		printf("Erro de alocação de memória\n");
-		exit(1);
-	}
-}
-
-/*
-	Inicializa/Reinicializa as filas
-*/
-void init_queue() {
-	Node *aux;
-	Queue *single_queue;
-
-	if (queues == NULL) {
-		queues = (Queue**) malloc(NUM_FILA * sizeof(Queue*));
-		if(queues == NULL) {
-			printf("Erro de alocação de memória\n");
-			exit(1);
-		}
-		for (int i = 0; i < NUM_FILA; i++) {
-			queues[i]->head = NULL;
-			queues[i]->tail = NULL;
-		}
-	}
-
-	else {
-		single_queue = queues[i];
-		aux = single_queue->head;
-
-		do {
-			queues->head = aux->next;
-		}while(aux != NULL);
-	}
-
+	inuse_processors_count = 0;
+	pthread_mutex_init(&inuse_processors_mutex, NULL);
 
 }
 
 /*
 	Scheduler dos processadores
+	é chamada na inicialização
 */
-void scheduler() {
+void *scheduler() {
+
+	while(true) {
+
+		if (pt_barrier) {
+			/* espera as threads terminarem */
+		}
+
+		if (pt_destroy) {
+			//limpa tudo
+		}
+	}
+}
+
+int exists_high_prority() {
 
 }
 
@@ -96,10 +85,26 @@ void scheduler() {
    definem maior prioridade. Caso o usuário defina uma prioridade inválida, use o default.
 */
 void pt_spawn(unsigned int prioridade, void *(*funcao) (void *), void *parametros){
-	pt_thread_ctx * thread;
+	pthread_t thread;
+	pt_thread_ctx *thread_ctx;
 
 	/* crie a thread e coloque ela na fila correta */
+	thread_ctx = (pt_thread_ctx*) malloc(sizeof(pt_thread_ctx));
+	thread_ctx->funcao = funcao;
+	thread_ctx->parametros = parametros;
 
+	if(prioridade >= 1 && prioridade <= 8) {
+		thread_ctx->prioridade = prioridade;
+	}
+	else thread_ctx->prioridade = 8;
+
+	pthread_create(&thread, NULL, worker_thread, (void *) thread_ctx);
+}
+
+/*
+	Função de execução da thread
+*/
+void *worker_thread(void *arg) {
 
 }
 
