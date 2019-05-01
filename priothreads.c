@@ -32,10 +32,14 @@ pthread_mutex_t inuse_processors_mutex;
 pthread_cond_t inuse_processors_cond;
 unsigned int inuse_processors_count;
 
-pthread_mutex_t total_threads_mutex;
+pthread_cond_t zero_threads;
+pthread_mutex_t total_threads_count_mutex;
 unsigned int total_threads_count;
 
-pthread_t schedler_thread;
+pthread_mutex_t is_scheduler_sleeping_mutex;
+int is_scheduler_sleeping;
+
+pthread_t scheduler_thread;
 
 /* Reinicializa o escalonador. Descarta todo o estado interno atual (limpa filas) e
    define o número de processadores virtuais entre 1 e 8. Default é 1 processador.
@@ -43,9 +47,16 @@ pthread_t schedler_thread;
 */
 void pt_init(unsigned int processadores){
 
-	pthread_att_destroy();
-	pthread_mutex_destroy();
-	pthread_cond_destroy();
+	pthread_mutex_destroy(&total_threads_count_mutex);
+	pthread_mutex_destroy(&inuse_processors_mutex);
+	pthread_cond_destroy(&inuse_processors_cond);
+
+	for (size_t i = 0; i < MAX_POS; i++) {
+		pthread_mutex_destroy(threads_per_queue_mutex[i]);
+		pthread_cond_destroy(queue_cond[i]);
+	}
+
+
 
 	if(processadores > 1 && processadores <= 8) {
 		total_processors = processadores;
@@ -56,6 +67,20 @@ void pt_init(unsigned int processadores){
 
 	inuse_processors_count = 0;
 	pthread_mutex_init(&inuse_processors_mutex, NULL);
+	pthread_cond_init(&inuse_processors_cond, NULL);
+
+	total_threads_count = 0;
+	pthread_mutex_init(&total_threads_count_mutex, NULL);
+	pthread_cond_init(&zero_threads, NULL);
+
+	for (size_t i = 0; i < MAX_POS; i++) {
+		pthread_cond_init(queue_cond[i], NULL);
+		is_empty[i] = 1;
+		pthread_mutex_init(threads_per_queue_mutex[i], NULL);
+		threads_per_queue[i] = 0;
+	}
+
+	pthread_create(&scheduler_thread, NULL, scheduler, NULL);
 
 }
 
@@ -64,6 +89,7 @@ void pt_init(unsigned int processadores){
 	é chamada na inicialização
 */
 void *scheduler() {
+	int status;
 
 	while(true) {
 
@@ -73,7 +99,20 @@ void *scheduler() {
 
 		if (pt_destroy) {
 			//limpa tudo
+			return;
 		}
+
+		pthread_mutex_lock(&total_threads_count)
+		while(total_threads_count == 0) {
+			status = pthrad_cond_wait(&zero_threads, &total_threads_count);
+			if(status != 0) {
+				break;
+			}
+		}
+
+
+
+
 	}
 }
 
