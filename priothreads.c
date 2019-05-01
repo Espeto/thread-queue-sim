@@ -12,14 +12,14 @@ typedef struct {
 	int yeld;
 	void *(*funcao) (void *);
 	void *parametros;
+	pt_thread *next;
 
 } pt_thread_ctx;
 
 /* Recomendo declarar tipos e estruturas internas aqui. */
 #define MAX_POS 8
 
-typedef struct {
-} pt_thread_processor;
+pt_thread_ctx *all_threads_pointer;
 
 pthread_cond_t queue_cond[MAX_POS];
 int is_empty[MAX_POS];
@@ -47,17 +47,6 @@ pthread_t scheduler_thread;
 */
 void pt_init(unsigned int processadores){
 
-	pthread_mutex_destroy(&total_threads_count_mutex);
-	pthread_mutex_destroy(&inuse_processors_mutex);
-	pthread_cond_destroy(&inuse_processors_cond);
-
-	for (size_t i = 0; i < MAX_POS; i++) {
-		pthread_mutex_destroy(threads_per_queue_mutex[i]);
-		pthread_cond_destroy(queue_cond[i]);
-	}
-
-
-
 	if(processadores > 1 && processadores <= 8) {
 		total_processors = processadores;
 	}
@@ -74,9 +63,9 @@ void pt_init(unsigned int processadores){
 	pthread_cond_init(&zero_threads, NULL);
 
 	for (size_t i = 0; i < MAX_POS; i++) {
-		pthread_cond_init(queue_cond[i], NULL);
+		pthread_cond_init(&queue_cond[i], NULL);
 		is_empty[i] = 1;
-		pthread_mutex_init(threads_per_queue_mutex[i], NULL);
+		pthread_mutex_init(&threads_per_queue_mutex[i], NULL);
 		threads_per_queue[i] = 0;
 	}
 
@@ -91,20 +80,20 @@ void pt_init(unsigned int processadores){
 void *scheduler() {
 	int status;
 
-	while(true) {
+	while(1) {
 
-		if (pt_barrier) {
-			/* espera as threads terminarem */
-		}
+		// if (pt_barrier) {
+		// 	/* espera as threads terminarem */
+		// }
+		//
+		// if (pt_destroy) {
+		// 	//limpa tudo
+		// 	return;
+		// }
 
-		if (pt_destroy) {
-			//limpa tudo
-			return;
-		}
-
-		pthread_mutex_lock(&total_threads_count)
+		pthread_mutex_lock(&total_threads_count_mutex);
 		while(total_threads_count == 0) {
-			status = pthrad_cond_wait(&zero_threads, &total_threads_count);
+			status = pthread_cond_wait(&zero_threads, &total_threads_count_mutex);
 			if(status != 0) {
 				break;
 			}
@@ -162,7 +151,14 @@ void pt_barrier(){
 /* Libera todas as estruturas de dados do escalonador */
 void pt_destroy(){
 	/* destrua as threads que estão esperando nas filas... */
+	pthread_mutex_destroy(&total_threads_count_mutex);
+	pthread_mutex_destroy(&inuse_processors_mutex);
+	pthread_cond_destroy(&inuse_processors_cond);
 
+	for (size_t i = 0; i < MAX_POS; i++) {
+		pthread_mutex_destroy(&threads_per_queue_mutex[i]);
+		pthread_cond_destroy(&queue_cond[i]);
+	}
 
 	/* libere memória da heap */
 
