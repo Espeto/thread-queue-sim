@@ -1,24 +1,26 @@
 #include "priothreads.h"
 #include <pthread.h>
 
+#define MAX_POS 8
+
 /* inclua aqui as bibliotecas que precisar */
 #include <stdlib.h>
 #include <stdio.h>
 
 /* adicione o que for preciso para uma thread ter prioridade e ficar bloqueada esperando sua vez de executar */
-typedef struct {
+typedef struct pt_thread_ctx pt_thread_ctx;
+
+typedef struct pt_thread_ctx{
 	long thread_id;
 	unsigned int prioridade;
 	int yeld;
 	void *(*funcao) (void *);
 	void *parametros;
-	pt_thread *next;
+	pt_thread_ctx *next;
 
 } pt_thread_ctx;
 
 /* Recomendo declarar tipos e estruturas internas aqui. */
-#define MAX_POS 8
-
 pt_thread_ctx *all_threads_pointer;
 
 pthread_cond_t queue_cond[MAX_POS];
