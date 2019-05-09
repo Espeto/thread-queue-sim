@@ -24,8 +24,8 @@ typedef struct pt_thread_ctx{
 pt_thread_ctx *all_threads_pointer;
 
 pthread_cond_t queue_cond[MAX_POS];
-int is_empty[MAX_POS];
 pthread_mutex_t threads_per_queue_mutex[MAX_POS];
+int is_empty[MAX_POS];
 int threads_per_queue[MAX_POS];
 
 unsigned int total_processors;
@@ -81,6 +81,7 @@ void pt_init(unsigned int processadores){
 */
 void *scheduler() {
 	int status;
+	int i = 0;
 
 	while(1) {
 
@@ -94,11 +95,23 @@ void *scheduler() {
 		// }
 
 		pthread_mutex_lock(&total_threads_count_mutex);
+		if(total_threads_count == 0) {
+			pthread_mutex_lock(&is_scheduler_sleeping_mutex);
+			is_scheduler_sleeping = 1;
+			pthread_mutex_unlock(&is_scheduler_sleeping_mutex);
+		}
 		while(total_threads_count == 0) {
 			status = pthread_cond_wait(&zero_threads, &total_threads_count_mutex);
+			//Handle possível erro com a condição
 			if(status != 0) {
 				break;
 			}
+		}
+
+		pthread_mutex_unlock(&total_threads_count_mutex);
+
+		while(total_threads_count > 0) {
+			if
 		}
 
 
@@ -115,7 +128,6 @@ int exists_high_prority() {
    definem maior prioridade. Caso o usuário defina uma prioridade inválida, use o default.
 */
 void pt_spawn(unsigned int prioridade, void *(*funcao) (void *), void *parametros){
-	pthread_t thread;
 	pt_thread_ctx *thread_ctx;
 
 	/* crie a thread e coloque ela na fila correta */
@@ -135,6 +147,20 @@ void pt_spawn(unsigned int prioridade, void *(*funcao) (void *), void *parametro
 	Função de execução da thread
 */
 void *worker_thread(void *arg) {
+	pt_thread_ctx *thread_ctx = (pt_thread_ctx*) arg;
+
+	pthread_mutex_lock(&is_scheduler_sleeping_mutex);
+	if(is_scheduler_sleeping) {
+		pthread_cond_signal(&zero_threads);
+		is_scheduler_sleeping = 0;
+	}
+	pthread_mutex_unlock(&is_scheduler_sleeping_mutex);
+
+	pthread_mutex_lock(&threads_per_queue_mutex[thread_ctx->prioridade]);
+	threads_per_queue[thread_ctx->prioridade]++;
+	is_empty[thread_ctx->prioridade] = 0;
+	pthread_cond_wait(&queue_cond[thread_ctx], &threads_per_queue_mutex[thread_ctx->prioridade]);
+	
 
 }
 
