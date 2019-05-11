@@ -20,6 +20,12 @@ typedef struct pt_thread_ctx{
 
 } pt_thread_ctx;
 
+typedef struct {
+
+	pt_thread_ctx
+
+} Processadores;
+
 /* Recomendo declarar tipos e estruturas internas aqui. */
 pt_thread_ctx *all_threads_pointer;
 
@@ -159,8 +165,13 @@ void *worker_thread(void *arg) {
 	pthread_mutex_lock(&threads_per_queue_mutex[thread_ctx->prioridade]);
 	threads_per_queue[thread_ctx->prioridade]++;
 	is_empty[thread_ctx->prioridade] = 0;
+	pthread_mutex_unlock(&&threads_per_queue_mutex[thread_ctx->prioridade]);
+
+	pthread_mutex_lock(&)
+
 	pthread_cond_wait(&queue_cond[thread_ctx], &threads_per_queue_mutex[thread_ctx->prioridade]);
-	
+	threads_per_queue[thread_ctx->prioridade]--;
+
 
 }
 
