@@ -25,9 +25,19 @@ void pt_barrier();
 /* Libera todas as estruturas de dados do escalonador */
 void pt_destroy();
 
-void *scheduler();
+/* Scheduler dos processadores
+	é chamada na inicialização
+*/
+void * scheduler();
 
-void *worker_thread(void *arg);
+/*
+	Função de execução da thread
+*/
+void * worker_thread(void *arg);
+
+/* Checa se a thread atual é a com maior prioridade
+*/
+int is_high_priority_thread(int atual);
 
 
 #endif /* _PRIOTHREADS_H */
