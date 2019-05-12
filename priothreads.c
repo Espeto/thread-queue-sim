@@ -20,12 +20,6 @@ typedef struct pt_thread_ctx{
 
 } pt_thread_ctx;
 
-typedef struct {
-
-	pt_thread_ctx
-
-} Processadores;
-
 /* Recomendo declarar tipos e estruturas internas aqui. */
 pt_thread_ctx *all_threads_pointer;
 
@@ -36,8 +30,10 @@ int threads_per_queue[MAX_POS];
 
 unsigned int total_processors;
 
+pthread_mutex_t waiting_call_lock;
+
+pthread_cond_t all_processors_inuse;
 pthread_mutex_t inuse_processors_mutex;
-pthread_cond_t inuse_processors_cond;
 unsigned int inuse_processors_count;
 
 pthread_cond_t zero_threads;
@@ -110,24 +106,23 @@ void *scheduler() {
 			status = pthread_cond_wait(&zero_threads, &total_threads_count_mutex);
 			//Handle possível erro com a condição
 			if(status != 0) {
-				break;
+				printf("Erro na variável de condição\n", );
+				exit(-1);
 			}
 		}
-
 		pthread_mutex_unlock(&total_threads_count_mutex);
 
 		while(total_threads_count > 0) {
+			int high_priority_pos = pos_high_prority_thread();
 			if
 		}
-
-
-
 
 	}
 }
 
-int exists_high_prority() {
+int pos_high_prority_thread() {
 
+	return 0;
 }
 
 /* Cria uma nova thread com a prioridade entre 1 e 8. Default é 8. Valores menores
@@ -167,12 +162,30 @@ void *worker_thread(void *arg) {
 	is_empty[thread_ctx->prioridade] = 0;
 	pthread_mutex_unlock(&&threads_per_queue_mutex[thread_ctx->prioridade]);
 
-	pthread_mutex_lock(&)
+	pthread_mutex_lock(&waiting_call_lock);
+	while(1) {
+		pthread_cond_wait(&queue_cond[thread_ctx], &waiting_call_lock);
+		break;
+	}
+	pthread_mutex_unlock(&waiting_call_lock);
 
-	pthread_cond_wait(&queue_cond[thread_ctx], &threads_per_queue_mutex[thread_ctx->prioridade]);
-	threads_per_queue[thread_ctx->prioridade]--;
+	pthread_mutex_lock(&inuse_processors_mutex);
+	inuse_processors_count++;
+	pthread_mutex_unlock(&inuse_processors_mutex);
 
+	(*(thread_ctx->funcao)) (thread_ctx->parametros);
 
+	pthread_mutex_lock(&inuse_processors_mutex);
+	if(inuse_processors_count == total_processors) {
+		pthread_cond_signal(&all_processors_inuse);
+	}
+	inuse_processors_count--;
+
+	pthread_mutex_unlock(&inuse_processors_mutex);
+
+	free(thread_ctx);
+
+	pthread_exit(NULL);
 }
 
 /* Faz a thread atual liberar o processador, voltar ao fim da fila de sua prioridade e
