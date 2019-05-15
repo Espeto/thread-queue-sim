@@ -11,13 +11,16 @@
 typedef struct{
 	pthread_t thread_id;
 	unsigned int prioridade;
-	int yeld;
 	void *(*funcao) (void *);
 	void *parametros;
-	//pt_thread_ctx *next;
 } pt_thread_ctx;
 
 /* Recomendo declarar tipos e estruturas internas aqui. */
+
+pthread_mutex_t barrier_called_mutex;
+int barrier_called;
+
+pt_thread_ctx **on_processor;
 
 pthread_cond_t queue_cond[MAX_SIZE];
 pthread_mutex_t threads_per_queue_mutex[MAX_SIZE];
@@ -25,6 +28,9 @@ int is_empty[MAX_SIZE];
 int threads_per_queue[MAX_SIZE];
 
 unsigned int total_processors;
+
+pthread_mutex_t finished_threads_mutex;
+unsigned int finished_threads;
 
 pthread_mutex_t waiting_call_lock;
 
@@ -56,9 +62,21 @@ void pt_init(unsigned int processadores){
 		total_processors = 1;
 	}
 
+	on_processor = (pt_thread_ctx**) malloc(total_processors * sizeof(pt_thread_ctx*));
+
+	for(int i=0; i<(int)total_processors; i++) {
+		on_processor[i] = NULL;
+	}
+
 	inuse_processors_count = 0;
 	pthread_mutex_init(&inuse_processors_mutex, NULL);
 	pthread_cond_init(&all_processors_inuse, NULL);
+
+	finished_threads = 0;
+	pthread_mutex_init(&finished_threads_mutex, NULL);
+
+	barrier_called = 0;
+	pthread_mutex_init(&barrier_called_mutex, NULL);
 
 	total_threads_count = 0;
 	pthread_mutex_init(&total_threads_count_mutex, NULL);
@@ -87,14 +105,15 @@ void * scheduler() {
 
 	while(1) {
 
-		// if (pt_barrier) {
-		// 	/* espera as threads terminarem */
-		// }
-		//
-		// if (pt_destroy) {
-		// 	//limpa tudo
-		// 	return;
-		// }
+		pthread_mutex_lock(&barrier_called_mutex);
+		pthread_mutex_lock(&finished_threads_mutex);
+		if(barrier_called && finished_threads == total_threads_count) {
+
+			pthread_mutex_unlock(&finished_threads_mutex);
+			pthread_mutex_unlock(&barrier_called_mutex);
+
+			pthread_exit(NULL);
+		}
 
 		//se não houver threads em nenhuma fila, chama wait aguardando por uma
 		pthread_mutex_lock(&total_threads_count_mutex);
@@ -112,7 +131,17 @@ void * scheduler() {
 		}
 		pthread_mutex_unlock(&total_threads_count_mutex);
 
-		//fazer o wait na condição em que todos os processadores estão em uso
+		//wait na condição em que todos os processadores estão em uso
+		pthread_mutex_lock(&inuse_processors_mutex);
+		while(inuse_processors_count == total_processors) {
+			status = pthread_cond_wait(&all_processors_inuse, &inuse_processors_mutex);
+
+			if(status != 0) {
+				printf("Erro na variável de condição\n");
+				exit(-1);
+			}
+		}
+		pthread_mutex_unlock(&inuse_processors_mutex);
 
 		for (int i = 0; i < MAX_SIZE; i++) {
 			pthread_mutex_lock(&threads_per_queue_mutex[i]);
@@ -171,6 +200,7 @@ void pt_spawn(unsigned int prioridade, void *(*funcao) (void *), void *parametro
 	Função de execução da thread
 */
 void * worker_thread(void *arg) {
+	int i;
 	pt_thread_ctx *thread_ctx = (pt_thread_ctx*) arg;
 
 	pthread_mutex_lock(&total_threads_count_mutex);
@@ -195,19 +225,37 @@ void * worker_thread(void *arg) {
 	}
 	pthread_mutex_unlock(&waiting_call_lock);
 
+	pthread_mutex_lock(&threads_per_queue_mutex[thread_ctx->prioridade]);
+	threads_per_queue[(int)thread_ctx->prioridade]--;
+	if(threads_per_queue[(int)thread_ctx->prioridade] == 0) is_empty[(int)thread_ctx->prioridade] = 1;
+
 	pthread_mutex_lock(&inuse_processors_mutex);
+	pthread_mutex_unlock(&threads_per_queue_mutex[(int)thread_ctx->prioridade]);
+
 	inuse_processors_count++;
+
+	for (i = 0; i < (int)total_processors; i++) {
+		if (on_processor[i] == NULL) {
+			on_processor[i] = thread_ctx;
+			break;
+		}
+	}
 	pthread_mutex_unlock(&inuse_processors_mutex);
 
 	(*(thread_ctx->funcao)) (thread_ctx->parametros);
 
 	pthread_mutex_lock(&inuse_processors_mutex);
+	on_processor[i] = NULL;
 	if(inuse_processors_count == total_processors) {
 		pthread_cond_signal(&all_processors_inuse);
 	}
 	inuse_processors_count--;
 
 	pthread_mutex_unlock(&inuse_processors_mutex);
+
+	pthread_mutex_lock(&finished_threads_mutex);
+	finished_threads++;
+	pthread_mutex_unlock(&finished_threads_mutex);
 
 	free(thread_ctx);
 
@@ -218,11 +266,65 @@ void * worker_thread(void *arg) {
    esperar o próximo escalonamento
 */
 void pt_yield() {
+	pthread_t self_id = pthread_self();
+	int i = 0;
+	pt_thread_ctx *thread;
 
+	pthread_mutex_lock(&inuse_processors_mutex);
+
+	for(int i=0; i < (int) total_processors; i++) {
+		if(on_processor[i] != NULL && pthread_equal(self_id, on_processor[i]->thread_id) != 0) {
+			thread = on_processor[i];
+			on_processor[i] = NULL;
+			break;
+		}
+	}
+
+	if(inuse_processors_count == total_processors) {
+		pthread_cond_signal(&all_processors_inuse);
+	}
+	inuse_processors_count--;
+
+	pthread_mutex_lock(&threads_per_queue_mutex[(int)thread->prioridade]);
+	pthread_mutex_unlock(&inuse_processors_mutex);
+
+	threads_per_queue[(int)thread->prioridade]++;
+	if(is_empty[(int)thread->prioridade]) is_empty[(int)thread->prioridade] = 0;
+	pthread_mutex_unlock(&threads_per_queue_mutex[(int)thread->prioridade]);
+
+	pthread_mutex_lock(&waiting_call_lock);
+	while(1) {
+		pthread_cond_wait(&queue_cond[(int)thread->prioridade], &waiting_call_lock);
+		break;
+	}
+	pthread_mutex_unlock(&waiting_call_lock);
+
+	pthread_mutex_lock(&threads_per_queue_mutex[(int)thread->prioridade]);
+	threads_per_queue[(int)thread->prioridade]--;
+	if(threads_per_queue[(int)thread->prioridade] == 0) {
+		is_empty[(int)thread->prioridade] = 1;
+	}
+	pthread_mutex_lock(&inuse_processors_mutex);
+	pthread_mutex_unlock(&threads_per_queue_mutex[(int)thread->prioridade]);
+
+	for ( i = 0; i < (int)total_processors; i++) {
+		if(on_processor[i] == NULL) {
+			on_processor[i] = thread;
+			break;
+		}
+	}
+
+	inuse_processors_count++;
+	pthread_mutex_unlock(&inuse_processors_mutex);
 }
 
 /* Espera todas as threads terminarem */
 void pt_barrier() {
+	pthread_mutex_lock(&barrier_called_mutex);
+	barrier_called = 1;
+	pthread_mutex_unlock(&barrier_called_mutex);
+
+	pthread_join(scheduler_thread, NULL);
 
 }
 
@@ -233,14 +335,17 @@ void pt_destroy(){
 	pthread_mutex_destroy(&inuse_processors_mutex);
 	pthread_mutex_destroy(&waiting_call_lock);
 	pthread_mutex_destroy(&is_scheduler_sleeping_mutex);
+	pthread_mutex_destroy(&finished_threads_mutex);
+	pthread_mutex_destroy(&barrier_called_mutex);
 
 	pthread_cond_destroy(&all_processors_inuse);
 	pthread_cond_destroy(&zero_threads);
 
-	for (size_t i = 0; i < MAX_SIZE; i++) {
+	for (int i = 0; i < MAX_SIZE; i++) {
 		pthread_mutex_destroy(&threads_per_queue_mutex[i]);
 		pthread_cond_destroy(&queue_cond[i]);
 	}
 
 	/* libere memória da heap */
+	free(on_processor);
 }
