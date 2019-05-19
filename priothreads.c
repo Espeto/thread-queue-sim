@@ -20,6 +20,7 @@ typedef struct{
 pthread_mutex_t barrier_called_mutex;
 int barrier_called;
 
+pthread_mutex_t on_processor_mutex;
 pt_thread_ctx **on_processor;
 
 pthread_cond_t queue_cond[MAX_SIZE];
@@ -39,12 +40,6 @@ unsigned int inuse_processors_count;
 
 pthread_mutex_t total_threads_count_mutex;
 unsigned int total_threads_count;
-
-//Contabilizar o total de threads finalizadas
-
-pthread_cond_t zero_threads;
-pthread_mutex_t is_scheduler_sleeping_mutex;
-int is_scheduler_sleeping;
 
 pthread_t scheduler_thread;
 
@@ -66,6 +61,7 @@ void pt_init(unsigned int processadores){
 	for(int i=0; i<(int)total_processors; i++) {
 		on_processor[i] = NULL;
 	}
+	pthread_mutex_init(&on_processor_mutex, NULL);
 
 	inuse_processors_count = 0;
 	pthread_mutex_init(&inuse_processors_mutex, NULL);
@@ -79,9 +75,6 @@ void pt_init(unsigned int processadores){
 
 	total_threads_count = 0;
 	pthread_mutex_init(&total_threads_count_mutex, NULL);
-
-	pthread_cond_init(&zero_threads, NULL);
-	pthread_mutex_init(&is_scheduler_sleeping_mutex, NULL);
 
 	pthread_mutex_init(&waiting_call_lock, NULL);
 
@@ -98,55 +91,45 @@ void pt_init(unsigned int processadores){
 	é chamada na inicialização
 */
 void * scheduler() {
-	int status;
-
-	//se não houver threads em nenhuma fila, chama wait aguardando por uma
-	pthread_mutex_lock(&total_threads_count_mutex);
-	//evitar spurious wake-up
-	while(total_threads_count == 0) {
-		pthread_mutex_lock(&is_scheduler_sleeping_mutex);
-		is_scheduler_sleeping = 1;
-		pthread_mutex_unlock(&is_scheduler_sleeping_mutex);
-		status = pthread_cond_wait(&zero_threads, &total_threads_count_mutex);
-		//Handle possível erro com a condição
-		if(status != 0) {
-			printf("Erro na variável de condição\n");
-			exit(-1);
-		}
-	}
-	pthread_mutex_unlock(&total_threads_count_mutex);
-	//Scheduler acordado - possui threads na fila
 
 	while(1) {
 
 		//wait na condição em que todos os processadores estão em uso
 		pthread_mutex_lock(&inuse_processors_mutex);
 		while(inuse_processors_count == total_processors) {
-			status = pthread_cond_wait(&all_processors_inuse, &inuse_processors_mutex);
-
-			if(status != 0) {
-				printf("Erro na variável de condição\n");
-				exit(-1);
-			}
+			pthread_cond_wait(&all_processors_inuse, &inuse_processors_mutex);
 		}
 		pthread_mutex_unlock(&inuse_processors_mutex);
 
-
 		for (int i = 0; i < MAX_SIZE; i++) {
+
 			pthread_mutex_lock(&threads_per_queue_mutex[i]);
+
 			if(threads_per_queue[i] == 0) {
 					pthread_mutex_unlock(&threads_per_queue_mutex[i]);
 					continue;
 			}
-			//Tem coisa pra ajeitar na lógica desse if
+
 			if(is_high_priority_thread(i)) {
-				pthread_cond_signal(&queue_cond[i]);
+
+				threads_per_queue[i]--;
+
 				pthread_mutex_unlock(&threads_per_queue_mutex[i]);
+
+				pthread_mutex_lock(&inuse_processors_mutex);
+				inuse_processors_count++;
+				pthread_mutex_unlock(&inuse_processors_mutex);
+
+				//Acorda a thread
+				pthread_cond_signal(&queue_cond[i]);
+
 				break;
 			}
+
 			pthread_mutex_unlock(&threads_per_queue_mutex[i]);
 		}
 
+		//Checa se vai terminar
 		pthread_mutex_lock(&barrier_called_mutex);
 		pthread_mutex_lock(&finished_threads_mutex);
 
@@ -193,6 +176,14 @@ void pt_spawn(unsigned int prioridade, void *(*funcao) (void *), void *parametro
 	}
 	else thread_ctx->prioridade = 8;
 
+	pthread_mutex_lock(&total_threads_count_mutex);
+	total_threads_count++;
+	pthread_mutex_unlock(&total_threads_count_mutex);
+
+	pthread_mutex_lock(&threads_per_queue_mutex[(int) thread_ctx->prioridade - 1]);
+	threads_per_queue[(int) thread_ctx->prioridade - 1]++;
+	pthread_mutex_unlock(&threads_per_queue_mutex[(int) thread_ctx->prioridade - 1]);
+
 	pthread_create(&thread_ctx->thread_id, NULL, worker_thread, (void *) thread_ctx);
 }
 
@@ -203,31 +194,13 @@ void * worker_thread(void *arg) {
 	int i;
 	pt_thread_ctx *thread_ctx = (pt_thread_ctx*) arg;
 
-	pthread_mutex_lock(&total_threads_count_mutex);
-	total_threads_count++;
-	pthread_mutex_unlock(&total_threads_count_mutex);
-
-	pthread_mutex_lock(&is_scheduler_sleeping_mutex);
-	if(is_scheduler_sleeping) {
-		pthread_cond_signal(&zero_threads);
-		is_scheduler_sleeping = 0;
-	}
-	pthread_mutex_unlock(&is_scheduler_sleeping_mutex);
-
-	//Contabiliza o numero de threads na fila
-	pthread_mutex_lock(&threads_per_queue_mutex[thread_ctx->prioridade - 1]);
-	threads_per_queue[(int)thread_ctx->prioridade - 1]++;
-	pthread_mutex_unlock(&threads_per_queue_mutex[(int)thread_ctx->prioridade - 1]);
-
 	//bloqueia na fila de sua prioridade
 	pthread_mutex_lock(&waiting_call_lock);
 	pthread_cond_wait(&queue_cond[(int)thread_ctx->prioridade - 1], &waiting_call_lock);
 	pthread_mutex_unlock(&waiting_call_lock);
 	//Thread foi acordada - está com o processador
 
-	//Se coloca no processador
-	pthread_mutex_lock(&inuse_processors_mutex);
-	inuse_processors_count++;
+	pthread_mutex_lock(&on_processor_mutex);
 
 	for (i = 0; i < (int)total_processors; i++) {
 		if (on_processor[i] == NULL) {
@@ -235,23 +208,22 @@ void * worker_thread(void *arg) {
 			break;
 		}
 	}
-	pthread_mutex_unlock(&inuse_processors_mutex);
-
-	//Decrementando o contador de thread na fila
-	pthread_mutex_lock(&threads_per_queue_mutex[thread_ctx->prioridade - 1]);
-	threads_per_queue[(int)thread_ctx->prioridade - 1]--;
-	pthread_mutex_unlock(&threads_per_queue_mutex[(int)thread_ctx->prioridade - 1]);
-
+	pthread_mutex_unlock(&on_processor_mutex);
 
 	//Thread vai executar
 	(*(thread_ctx->funcao)) (thread_ctx->parametros);
 
+	pthread_mutex_lock(&on_processor_mutex);
+	on_processor[i] = NULL;
+	pthread_mutex_unlock(&on_processor_mutex);
+
 	//Thread terminou execução, vai liberar o processador
 	pthread_mutex_lock(&inuse_processors_mutex);
-	on_processor[i] = NULL;
+
 	if(inuse_processors_count == total_processors) {
 		pthread_cond_signal(&all_processors_inuse);
 	}
+
 	inuse_processors_count--;
 	pthread_mutex_unlock(&inuse_processors_mutex);
 
@@ -273,7 +245,7 @@ void pt_yield() {
 	pt_thread_ctx *thread;
 
 	//Thread  se remove do processador
-	pthread_mutex_lock(&inuse_processors_mutex);
+	pthread_mutex_lock(&on_processor_mutex);
 	for(int i=0; i < (int) total_processors; i++) {
 		if(on_processor[i] != NULL && pthread_equal(self_id, on_processor[i]->thread_id) != 0) {
 			thread = on_processor[i];
@@ -281,18 +253,19 @@ void pt_yield() {
 			break;
 		}
 	}
-
-	if(inuse_processors_count == total_processors) {
-		pthread_cond_signal(&all_processors_inuse);
-	}
-	inuse_processors_count--;
-	pthread_mutex_unlock(&inuse_processors_mutex);
+	pthread_mutex_unlock(&on_processor_mutex);
 
 	//Incrementa a quantidade de Threads na fila de sua prioridade
 	pthread_mutex_lock(&threads_per_queue_mutex[(int)thread->prioridade - 1]);
 	threads_per_queue[(int)thread->prioridade - 1]++;
 	pthread_mutex_unlock(&threads_per_queue_mutex[(int)thread->prioridade - 1]);
 
+	pthread_mutex_lock(&inuse_processors_mutex);
+		if(inuse_processors_count == total_processors) {
+			pthread_cond_signal(&all_processors_inuse);
+		}
+	inuse_processors_count--;
+	pthread_mutex_unlock(&inuse_processors_mutex);
 
 	//Thread se bloqueia em sua file de prioridade
 	pthread_mutex_lock(&waiting_call_lock);
@@ -300,24 +273,15 @@ void pt_yield() {
 	pthread_mutex_unlock(&waiting_call_lock);
 	//Thread acordada
 
-	//Thread retoma o processdor
-	pthread_mutex_lock(&inuse_processors_mutex);
-	for (int i = 0; i < (int)total_processors; i++) {
-		if(on_processor[i] == NULL) {
+	//Thread se coloca no vetor de processador
+	pthread_mutex_lock(&on_processor_mutex);
+	for(int i=0; i < (int) total_processors; i++) {
+		if(on_processor[i] == NULL ) {
 			on_processor[i] = thread;
 			break;
 		}
 	}
-
-	inuse_processors_count++;
-	pthread_mutex_unlock(&inuse_processors_mutex);
-
-	//Decrementa o contador de filas de sua prioridade
-	pthread_mutex_lock(&threads_per_queue_mutex[(int)thread->prioridade - 1]);
-	threads_per_queue[(int)thread->prioridade - 1]--;
-	pthread_mutex_unlock(&threads_per_queue_mutex[(int)thread->prioridade - 1]);
-
-	//Retoma execução
+	pthread_mutex_unlock(&on_processor_mutex);
 }
 
 /* Espera todas as threads terminarem */
@@ -336,12 +300,11 @@ void pt_destroy(){
 	pthread_mutex_destroy(&total_threads_count_mutex);
 	pthread_mutex_destroy(&inuse_processors_mutex);
 	pthread_mutex_destroy(&waiting_call_lock);
-	pthread_mutex_destroy(&is_scheduler_sleeping_mutex);
 	pthread_mutex_destroy(&finished_threads_mutex);
 	pthread_mutex_destroy(&barrier_called_mutex);
+	pthread_mutex_destroy(&on_processor_mutex);
 
 	pthread_cond_destroy(&all_processors_inuse);
-	pthread_cond_destroy(&zero_threads);
 
 	for (int i = 0; i < MAX_SIZE; i++) {
 		pthread_mutex_destroy(&threads_per_queue_mutex[i]);
