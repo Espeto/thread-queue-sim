@@ -176,14 +176,6 @@ void pt_spawn(unsigned int prioridade, void *(*funcao) (void *), void *parametro
 	}
 	else thread_ctx->prioridade = 8;
 
-	pthread_mutex_lock(&total_threads_count_mutex);
-	total_threads_count++;
-	pthread_mutex_unlock(&total_threads_count_mutex);
-
-	pthread_mutex_lock(&threads_per_queue_mutex[(int) thread_ctx->prioridade - 1]);
-	threads_per_queue[(int) thread_ctx->prioridade - 1]++;
-	pthread_mutex_unlock(&threads_per_queue_mutex[(int) thread_ctx->prioridade - 1]);
-
 	pthread_create(&thread_ctx->thread_id, NULL, worker_thread, (void *) thread_ctx);
 }
 
@@ -193,6 +185,14 @@ void pt_spawn(unsigned int prioridade, void *(*funcao) (void *), void *parametro
 void * worker_thread(void *arg) {
 	int i;
 	pt_thread_ctx *thread_ctx = (pt_thread_ctx*) arg;
+
+	pthread_mutex_lock(&total_threads_count_mutex);
+	total_threads_count++;
+	pthread_mutex_unlock(&total_threads_count_mutex);
+
+	pthread_mutex_lock(&threads_per_queue_mutex[(int) thread_ctx->prioridade - 1]);
+	threads_per_queue[(int) thread_ctx->prioridade - 1]++;
+	pthread_mutex_unlock(&threads_per_queue_mutex[(int) thread_ctx->prioridade - 1]);
 
 	//bloqueia na fila de sua prioridade
 	pthread_mutex_lock(&waiting_call_lock);
