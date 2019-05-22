@@ -53,6 +53,7 @@ pthread_t scheduler_thread;
    Caso o usuário defina um número inválido de processadores, use o default.
 */
 void pt_init(unsigned int processadores){
+	int status;
 
 	if(processadores > 1 && processadores <= 8) {
 		total_processors = processadores;
@@ -64,65 +65,66 @@ void pt_init(unsigned int processadores){
 	all_threads_queue = NULL;
 
 	on_processor = (pt_thread_ctx**) malloc(total_processors * sizeof(pt_thread_ctx*));
-	pthread_mutex_init(&on_processor_lock, NULL);
+	for(int i = 0; i < (int) total_processors; i++) {
+		on_processor[i] = NULL;
+	}
+	status = pthread_mutex_init(&on_processor_lock, NULL);
 
-	pthread_mutex_init(&barrier_called_lock, NULL);
+	status = pthread_mutex_init(&barrier_called_lock, NULL);
 	barrier_called = 0;
 
 	inuse_processors_count = 0;
-	pthread_mutex_init(&inuse_processors_lock, NULL);
-	pthread_cond_init(&all_processors_inuse, NULL);
+	status = pthread_mutex_init(&inuse_processors_lock, NULL);
+	status = pthread_cond_init(&all_processors_inuse, NULL);
 
 	finished_threads = 0;
-	pthread_mutex_init(&finished_threads_lock, NULL);
+	status = pthread_mutex_init(&finished_threads_lock, NULL);
 
 	total_threads_count = 0;
-	pthread_mutex_init(&total_threads_count_lock, NULL);
+	status = pthread_mutex_init(&total_threads_count_lock, NULL);
 
 	for (int i = 0; i < MAX_SIZE; i++) {
-		pthread_cond_init(&queue_cond[i], NULL);
+		status = pthread_cond_init(&queue_cond[i], NULL);
 		threads_per_queue[i] = 0;
 		can_go[i] = 0;
 	}
-	pthread_mutex_init(&threads_per_queue_lock, NULL);
+	status = pthread_mutex_init(&threads_per_queue_lock, NULL);
 
-	pthread_create(&scheduler_thread, NULL, scheduler, NULL);
+	status = pthread_create(&scheduler_thread, NULL, scheduler, NULL);
 }
 
 /* Scheduler dos processadores
 	é chamada na inicialização
 */
 void * scheduler() {
-	int higher;
+	int status;
 
 	while(1) {
 
-		pthread_mutex_lock(&total_threads_count_lock);
+		status = pthread_mutex_lock(&total_threads_count_lock);
 		if(total_threads_count == 0) {
-			pthread_mutex_unlock(&total_threads_count_lock);
+			status = pthread_mutex_unlock(&total_threads_count_lock);
 			continue;
 		}
-		pthread_mutex_unlock(&total_threads_count_lock);
+		status = pthread_mutex_unlock(&total_threads_count_lock);
 
 		for (int i = 0; i < MAX_SIZE; i++) {
 
 			//wait na condição em que todos os processadores estão em uso
-			pthread_mutex_lock(&inuse_processors_lock);
+			status = pthread_mutex_lock(&inuse_processors_lock);
 			while(inuse_processors_count == total_processors) {
-				pthread_cond_wait(&all_processors_inuse, &inuse_processors_lock);
+				status = pthread_cond_wait(&all_processors_inuse, &inuse_processors_lock);
 			}
-			pthread_mutex_unlock(&inuse_processors_lock);
+			status = pthread_mutex_unlock(&inuse_processors_lock);
 
-			pthread_mutex_lock(&threads_per_queue_lock);
+			status = pthread_mutex_lock(&threads_per_queue_lock);
 			if(threads_per_queue[i] == 0) {
 					pthread_mutex_unlock(&threads_per_queue_lock);
 					continue;
 			}
-			pthread_mutex_unlock(&threads_per_queue_lock);
+			status = pthread_mutex_unlock(&threads_per_queue_lock);
 
-			higher = is_high_priority_thread(i);
-
-			if(higher == -1) {
+			if(is_high_priority_thread(i)) {
 
 				pthread_mutex_lock(&inuse_processors_lock);
 				can_go[i] = 1;
@@ -132,7 +134,7 @@ void * scheduler() {
 				//Acorda a thread
 			}
 			else {
-				i = higher;
+				break;
 			}
 
 		}
@@ -159,12 +161,12 @@ int is_high_priority_thread(int atual) {
 	for (int i = 0; i < atual; i++) {
 		if(threads_per_queue[i] > 0) {
 			pthread_mutex_unlock(&threads_per_queue_lock);
-			return i;
+			return 0;
 		}
 	}
 	pthread_mutex_unlock(&threads_per_queue_lock);
 
-	return -1;
+	return 1;
 }
 
 /* Cria uma nova thread com a prioridade entre 1 e 8. Default é 8. Valores menores
