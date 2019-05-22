@@ -23,19 +23,21 @@ typedef struct all_threads{
 
 all_threads *all_threads_queue;
 
+pthread_mutex_t barrier_called_lock;
+int barrier_called;
+
 pthread_mutex_t on_processor_lock;
 pt_thread_ctx **on_processor;
 
 pthread_cond_t queue_cond[MAX_SIZE];
 pthread_mutex_t threads_per_queue_lock;
 int threads_per_queue[MAX_SIZE];
+int can_go[MAX_SIZE];
 
 unsigned int total_processors;
 
 pthread_mutex_t finished_threads_lock;
 unsigned int finished_threads;
-
-pthread_mutex_t waiting_call_lock;
 
 pthread_cond_t all_processors_inuse;
 pthread_mutex_t inuse_processors_lock;
@@ -59,9 +61,13 @@ void pt_init(unsigned int processadores){
 		total_processors = 1;
 	}
 
-	on_processor = (pt_thread_ctx**) malloc(total_processors * sizeof(pt_thread_ctx*));
+	all_threads_queue = NULL;
 
+	on_processor = (pt_thread_ctx**) malloc(total_processors * sizeof(pt_thread_ctx*));
 	pthread_mutex_init(&on_processor_lock, NULL);
+
+	pthread_mutex_init(&barrier_called_lock, NULL);
+	barrier_called = 0;
 
 	inuse_processors_count = 0;
 	pthread_mutex_init(&inuse_processors_lock, NULL);
@@ -73,12 +79,10 @@ void pt_init(unsigned int processadores){
 	total_threads_count = 0;
 	pthread_mutex_init(&total_threads_count_lock, NULL);
 
-	pthread_mutex_init(&waiting_call_lock, NULL);
-
-
 	for (int i = 0; i < MAX_SIZE; i++) {
 		pthread_cond_init(&queue_cond[i], NULL);
 		threads_per_queue[i] = 0;
+		can_go[i] = 0;
 	}
 	pthread_mutex_init(&threads_per_queue_lock, NULL);
 
@@ -121,6 +125,7 @@ void * scheduler() {
 			if(higher == -1) {
 
 				pthread_mutex_lock(&inuse_processors_lock);
+				can_go[i] = 1;
 				pthread_cond_signal(&queue_cond[i]);
 				inuse_processors_count++;
 				pthread_mutex_unlock(&inuse_processors_lock);
@@ -134,12 +139,15 @@ void * scheduler() {
 
 		//Checa se vai terminar
 		pthread_mutex_lock(&finished_threads_lock);
-		if(finished_threads == total_threads_count) {
+		pthread_mutex_lock(&barrier_called_lock);
+		if(barrier_called == 1 && finished_threads == total_threads_count) {
 
+			pthread_mutex_unlock(&barrier_called_lock);
 			pthread_mutex_unlock(&finished_threads_lock);
 
 			pthread_exit(NULL);
 		}
+		pthread_mutex_unlock(&barrier_called_lock);
 		pthread_mutex_unlock(&finished_threads_lock);
 	}
 }
@@ -164,8 +172,20 @@ int is_high_priority_thread(int atual) {
 */
 void pt_spawn(unsigned int prioridade, void *(*funcao) (void *), void *parametros) {
 	pt_thread_ctx *thread_ctx;
+	all_threads *Node, *aux;
 
 	/* crie a thread e coloque ela na fila correta */
+	Node = (all_threads*) malloc(sizeof(all_threads));
+	if(all_threads_queue == NULL) {
+		all_threads_queue = Node;
+		Node->next = NULL;
+	}
+	else {
+		aux = all_threads_queue;
+		all_threads_queue = Node;
+		Node->next = aux;
+	}
+
 	thread_ctx = (pt_thread_ctx*) malloc(sizeof(pt_thread_ctx));
 	thread_ctx->funcao = funcao;
 	thread_ctx->parametros = parametros;
@@ -177,6 +197,7 @@ void pt_spawn(unsigned int prioridade, void *(*funcao) (void *), void *parametro
 
 	pthread_create(&thread_ctx->thread_id, NULL, worker_thread, (void *) thread_ctx);
 
+	Node->thread_id = thread_ctx->thread_id;
 }
 
 /*
@@ -197,9 +218,17 @@ void * worker_thread(void *arg) {
 
 	//bloqueia na fila de sua prioridade
 	pthread_mutex_lock(&inuse_processors_lock);
-	pthread_cond_wait(&queue_cond[(int)thread_ctx->prioridade - 1], &inuse_processors_lock);
+	while(!can_go[(int)thread_ctx->prioridade - 1]) {
+		pthread_cond_wait(&queue_cond[(int)thread_ctx->prioridade - 1], &inuse_processors_lock);
+	}
+	can_go[thread_ctx->prioridade - 1] = 0;
 	pthread_mutex_unlock(&inuse_processors_lock);
 	//Thread foi acordada - está com o processador
+
+	//Contabiliza remoção da fila
+	pthread_mutex_lock(&threads_per_queue_lock);
+	threads_per_queue[(int) thread_ctx->prioridade - 1]--;
+	pthread_mutex_unlock(&threads_per_queue_lock);
 
 	//Se coloca na estrutura para possível yeld
 	pthread_mutex_lock(&on_processor_lock);
@@ -214,11 +243,6 @@ void * worker_thread(void *arg) {
 	//Thread vai executar
 	(*(thread_ctx->funcao)) (thread_ctx->parametros);
 
-	//Contabiliza remoção da fila
-	pthread_mutex_lock(&threads_per_queue_lock);
-	threads_per_queue[(int) thread_ctx->prioridade - 1]--;
-	pthread_mutex_unlock(&threads_per_queue_lock);
-
 	//Thread  se remove do processador
 	pthread_mutex_lock(&on_processor_lock);
 	for(int i=0; i < (int) total_processors; i++) {
@@ -228,8 +252,6 @@ void * worker_thread(void *arg) {
 		}
 	}
 	pthread_mutex_unlock(&on_processor_lock);
-
-	free(thread_ctx);
 
 	//Contabiliza que terminou
 	pthread_mutex_lock(&finished_threads_lock);
@@ -243,6 +265,8 @@ void * worker_thread(void *arg) {
 	}
 	inuse_processors_count--;
 	pthread_mutex_unlock(&inuse_processors_lock);
+
+	free(thread_ctx);
 
 	pthread_exit(NULL);
 }
@@ -271,12 +295,15 @@ void pt_yield() {
 	pthread_mutex_unlock(&threads_per_queue_lock);
 
 	pthread_mutex_lock(&inuse_processors_lock);
-		if(inuse_processors_count == total_processors) {
-			pthread_cond_signal(&all_processors_inuse);
-		}
+	if(inuse_processors_count == total_processors) {
+		pthread_cond_signal(&all_processors_inuse);
+	}
 	inuse_processors_count--;
 	//Thread se bloqueia em sua fila de prioridade
-	pthread_cond_wait(&queue_cond[(int)thread->prioridade - 1], &inuse_processors_lock);
+	while(!can_go[(int)thread->prioridade - 1]) {
+		pthread_cond_wait(&queue_cond[(int)thread->prioridade - 1], &inuse_processors_lock);
+	}
+	can_go[(int)thread->prioridade - 1] = 0;
 	//Thread acordada
 	pthread_mutex_unlock(&inuse_processors_lock);
 
@@ -297,17 +324,30 @@ void pt_yield() {
 
 /* Espera todas as threads terminarem */
 void pt_barrier() {
+	all_threads *aux;
+	aux = all_threads_queue;
+
+	pthread_mutex_lock(&barrier_called_lock);
+	barrier_called = 1;
+	pthread_mutex_unlock(&barrier_called_lock);
+
+	while(aux != NULL) {
+		pthread_join(aux->thread_id, NULL);
+		aux = aux->next;
+	}
 
 	pthread_join(scheduler_thread, NULL);
-
 }
 
 /* Libera todas as estruturas de dados do escalonador */
 void pt_destroy(){
+	all_threads *aux;
+
 	/* destrua as threads que estão esperando nas filas... */
 	pthread_mutex_destroy(&total_threads_count_lock);
 	pthread_mutex_destroy(&inuse_processors_lock);
 	pthread_mutex_destroy(&finished_threads_lock);
+	pthread_mutex_destroy(&barrier_called_lock);
 
 	pthread_mutex_destroy(&on_processor_lock);
 
@@ -321,4 +361,10 @@ void pt_destroy(){
 
 	/* libere memória da heap */
 	free(on_processor);
+
+	while(all_threads_queue != NULL) {
+		aux = all_threads_queue;
+		all_threads_queue = aux->next;
+		free(aux);
+	}
 }
