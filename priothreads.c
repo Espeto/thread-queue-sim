@@ -126,11 +126,11 @@ void * scheduler() {
 
 			if(is_high_priority_thread(i)) {
 
-				pthread_mutex_lock(&inuse_processors_lock);
+				status = pthread_mutex_lock(&inuse_processors_lock);
 				can_go[i] = 1;
-				pthread_cond_signal(&queue_cond[i]);
+				status = pthread_cond_signal(&queue_cond[i]);
 				inuse_processors_count++;
-				pthread_mutex_unlock(&inuse_processors_lock);
+				status = pthread_mutex_unlock(&inuse_processors_lock);
 				//Acorda a thread
 			}
 			else {
@@ -140,31 +140,32 @@ void * scheduler() {
 		}
 
 		//Checa se vai terminar
-		pthread_mutex_lock(&finished_threads_lock);
-		pthread_mutex_lock(&barrier_called_lock);
+		status = pthread_mutex_lock(&finished_threads_lock);
+		status = pthread_mutex_lock(&barrier_called_lock);
 		if(barrier_called == 1 && finished_threads == total_threads_count) {
 
-			pthread_mutex_unlock(&barrier_called_lock);
-			pthread_mutex_unlock(&finished_threads_lock);
+			status = pthread_mutex_unlock(&barrier_called_lock);
+			status = pthread_mutex_unlock(&finished_threads_lock);
 
 			pthread_exit(NULL);
 		}
-		pthread_mutex_unlock(&barrier_called_lock);
-		pthread_mutex_unlock(&finished_threads_lock);
+		status = pthread_mutex_unlock(&barrier_called_lock);
+		status = pthread_mutex_unlock(&finished_threads_lock);
 	}
 }
 
 /* Checa se a thread atual é a com maior prioridade
 */
 int is_high_priority_thread(int atual) {
-	pthread_mutex_lock(&threads_per_queue_lock);
+	int status;
+	status = pthread_mutex_lock(&threads_per_queue_lock);
 	for (int i = 0; i < atual; i++) {
 		if(threads_per_queue[i] > 0) {
-			pthread_mutex_unlock(&threads_per_queue_lock);
+			status = pthread_mutex_unlock(&threads_per_queue_lock);
 			return 0;
 		}
 	}
-	pthread_mutex_unlock(&threads_per_queue_lock);
+	status = pthread_mutex_unlock(&threads_per_queue_lock);
 
 	return 1;
 }
@@ -175,6 +176,7 @@ int is_high_priority_thread(int atual) {
 void pt_spawn(unsigned int prioridade, void *(*funcao) (void *), void *parametros) {
 	pt_thread_ctx *thread_ctx;
 	all_threads *Node, *aux;
+	int status;
 
 	/* crie a thread e coloque ela na fila correta */
 	Node = (all_threads*) malloc(sizeof(all_threads));
@@ -197,7 +199,7 @@ void pt_spawn(unsigned int prioridade, void *(*funcao) (void *), void *parametro
 	}
 	else thread_ctx->prioridade = 8;
 
-	pthread_create(&thread_ctx->thread_id, NULL, worker_thread, (void *) thread_ctx);
+	status = pthread_create(&thread_ctx->thread_id, NULL, worker_thread, (void *) thread_ctx);
 
 	Node->thread_id = thread_ctx->thread_id;
 }
@@ -207,66 +209,68 @@ void pt_spawn(unsigned int prioridade, void *(*funcao) (void *), void *parametro
 */
 void * worker_thread(void *arg) {
 	pt_thread_ctx *thread_ctx = (pt_thread_ctx*) arg;
+	int status;
 
-	pthread_detach(thread_ctx->thread_id);
-
-	pthread_mutex_lock(&threads_per_queue_lock);
-	threads_per_queue[(int) thread_ctx->prioridade - 1]++;
-	pthread_mutex_unlock(&threads_per_queue_lock);
-
-	pthread_mutex_lock(&total_threads_count_lock);
+	status = pthread_mutex_lock(&total_threads_count_lock);
 	total_threads_count++;
-	pthread_mutex_unlock(&total_threads_count_lock);
+	status = pthread_mutex_unlock(&total_threads_count_lock);
 
 	//bloqueia na fila de sua prioridade
-	pthread_mutex_lock(&inuse_processors_lock);
+	status = pthread_mutex_lock(&inuse_processors_lock);
+
+	status = pthread_mutex_lock(&threads_per_queue_lock);
+	threads_per_queue[(int) thread_ctx->prioridade - 1]++;
+	status = pthread_mutex_unlock(&threads_per_queue_lock);
+
 	while(!can_go[(int)thread_ctx->prioridade - 1]) {
-		pthread_cond_wait(&queue_cond[(int)thread_ctx->prioridade - 1], &inuse_processors_lock);
-	}
+		status = pthread_cond_wait(&queue_cond[(int)thread_ctx->prioridade - 1], &inuse_processors_lock);
+	}//Thread foi acordada - está com o processador
 	can_go[thread_ctx->prioridade - 1] = 0;
-	pthread_mutex_unlock(&inuse_processors_lock);
-	//Thread foi acordada - está com o processador
 
 	//Contabiliza remoção da fila
-	pthread_mutex_lock(&threads_per_queue_lock);
+	status = pthread_mutex_lock(&threads_per_queue_lock);
 	threads_per_queue[(int) thread_ctx->prioridade - 1]--;
-	pthread_mutex_unlock(&threads_per_queue_lock);
+	status = pthread_mutex_unlock(&threads_per_queue_lock);
+
+	status = pthread_mutex_unlock(&inuse_processors_lock);
+	//Thread vai executar
 
 	//Se coloca na estrutura para possível yeld
-	pthread_mutex_lock(&on_processor_lock);
+	status = pthread_mutex_lock(&on_processor_lock);
 	for (int i = 0; i < (int)total_processors; i++) {
 		if (on_processor[i] == NULL) {
 			on_processor[i] = thread_ctx;
 			break;
 		}
 	}
-	pthread_mutex_unlock(&on_processor_lock);
+	status = pthread_mutex_unlock(&on_processor_lock);
 
 	//Thread vai executar
 	(*(thread_ctx->funcao)) (thread_ctx->parametros);
 
 	//Thread  se remove do processador
-	pthread_mutex_lock(&on_processor_lock);
+	status  = pthread_mutex_lock(&on_processor_lock);
 	for(int i=0; i < (int) total_processors; i++) {
 		if(on_processor[i] != NULL && pthread_equal(thread_ctx->thread_id, on_processor[i]->thread_id) != 0) {
 			on_processor[i] = NULL;
 			break;
 		}
 	}
-	pthread_mutex_unlock(&on_processor_lock);
-
-	//Contabiliza que terminou
-	pthread_mutex_lock(&finished_threads_lock);
-	finished_threads++;
-	pthread_mutex_unlock(&finished_threads_lock);
+	status = pthread_mutex_unlock(&on_processor_lock);
 
 	//Thread terminou execução, vai liberar o processador
-	pthread_mutex_lock(&inuse_processors_lock);
+	status = pthread_mutex_lock(&inuse_processors_lock);
 	if(inuse_processors_count == total_processors) {
-		pthread_cond_signal(&all_processors_inuse);
+		status = pthread_cond_signal(&all_processors_inuse);
 	}
 	inuse_processors_count--;
-	pthread_mutex_unlock(&inuse_processors_lock);
+
+	//Contabiliza que terminou
+	status = pthread_mutex_lock(&finished_threads_lock);
+	finished_threads++;
+	status = pthread_mutex_unlock(&finished_threads_lock);
+
+	status = pthread_mutex_unlock(&inuse_processors_lock);
 
 	free(thread_ctx);
 
@@ -279,9 +283,10 @@ void * worker_thread(void *arg) {
 void pt_yield() {
 	pthread_t self_id = pthread_self();
 	pt_thread_ctx *thread;
+	int status;
 
 	//Thread  se remove do processador
-	pthread_mutex_lock(&on_processor_lock);
+	status = pthread_mutex_lock(&on_processor_lock);
 	for(int i=0; i < (int) total_processors; i++) {
 		if(on_processor[i] != NULL && pthread_equal(self_id, on_processor[i]->thread_id) != 0) {
 			thread = on_processor[i];
@@ -289,77 +294,82 @@ void pt_yield() {
 			break;
 		}
 	}
-	pthread_mutex_unlock(&on_processor_lock);
+	status = pthread_mutex_unlock(&on_processor_lock);
 
+	//incrementando a posição dentro da mudança de estado do processador
+	//pra evitar que incremente a fila, mas a thread n esteja de fato esperando
+	status = pthread_mutex_lock(&inuse_processors_lock);
 	//Incrementa a quantidade de Threads na fila de sua prioridade
-	pthread_mutex_lock(&threads_per_queue_lock);
+	status = pthread_mutex_lock(&threads_per_queue_lock);
 	threads_per_queue[(int)thread->prioridade - 1]++;
-	pthread_mutex_unlock(&threads_per_queue_lock);
+	status = pthread_mutex_unlock(&threads_per_queue_lock);
 
-	pthread_mutex_lock(&inuse_processors_lock);
 	if(inuse_processors_count == total_processors) {
-		pthread_cond_signal(&all_processors_inuse);
+		status = pthread_cond_signal(&all_processors_inuse);
 	}
 	inuse_processors_count--;
 	//Thread se bloqueia em sua fila de prioridade
 	while(!can_go[(int)thread->prioridade - 1]) {
-		pthread_cond_wait(&queue_cond[(int)thread->prioridade - 1], &inuse_processors_lock);
-	}
-	can_go[(int)thread->prioridade - 1] = 0;
-	//Thread acordada
-	pthread_mutex_unlock(&inuse_processors_lock);
+		status = pthread_cond_wait(&queue_cond[(int)thread->prioridade - 1], &inuse_processors_lock);
+	}//Thread acordada
 
-	pthread_mutex_lock(&threads_per_queue_lock);
+	status = pthread_mutex_lock(&threads_per_queue_lock);
 	threads_per_queue[(int)thread->prioridade - 1]--;
-	pthread_mutex_unlock(&threads_per_queue_lock);
+	status = pthread_mutex_unlock(&threads_per_queue_lock);
+
+	can_go[(int)thread->prioridade - 1] = 0;
+	status = pthread_mutex_unlock(&inuse_processors_lock);
+	//Thread vai executar
 
 	//Thread se coloca no vetor de processador
-	pthread_mutex_lock(&on_processor_lock);
+	status = pthread_mutex_lock(&on_processor_lock);
 	for(int i=0; i < (int) total_processors; i++) {
 		if(on_processor[i] == NULL ) {
 			on_processor[i] = thread;
 			break;
 		}
 	}
-	pthread_mutex_unlock(&on_processor_lock);
+	status = pthread_mutex_unlock(&on_processor_lock);
 }
 
 /* Espera todas as threads terminarem */
 void pt_barrier() {
 	all_threads *aux;
 	aux = all_threads_queue;
+	int status;
 
-	pthread_mutex_lock(&barrier_called_lock);
+	status = pthread_mutex_lock(&barrier_called_lock);
 	barrier_called = 1;
-	pthread_mutex_unlock(&barrier_called_lock);
+	status = pthread_mutex_unlock(&barrier_called_lock);
 
 	while(aux != NULL) {
-		pthread_join(aux->thread_id, NULL);
+		status = pthread_join(aux->thread_id, NULL);
 		aux = aux->next;
 	}
 
-	pthread_join(scheduler_thread, NULL);
+	status = pthread_join(scheduler_thread, NULL);
 }
 
 /* Libera todas as estruturas de dados do escalonador */
 void pt_destroy(){
 	all_threads *aux;
+	int status;
 
 	/* destrua as threads que estão esperando nas filas... */
-	pthread_mutex_destroy(&total_threads_count_lock);
-	pthread_mutex_destroy(&inuse_processors_lock);
-	pthread_mutex_destroy(&finished_threads_lock);
-	pthread_mutex_destroy(&barrier_called_lock);
+	status = pthread_mutex_destroy(&total_threads_count_lock);
+	status = pthread_mutex_destroy(&inuse_processors_lock);
+	status = pthread_mutex_destroy(&finished_threads_lock);
+	status = pthread_mutex_destroy(&barrier_called_lock);
 
-	pthread_mutex_destroy(&on_processor_lock);
+	status = pthread_mutex_destroy(&on_processor_lock);
 
-	pthread_cond_destroy(&all_processors_inuse);
+	status = pthread_cond_destroy(&all_processors_inuse);
 
 	for (int i = 0; i < MAX_SIZE; i++) {
-		pthread_cond_destroy(&queue_cond[i]);
+		status = pthread_cond_destroy(&queue_cond[i]);
 	}
 
-	pthread_mutex_destroy(&threads_per_queue_lock);
+	status = pthread_mutex_destroy(&threads_per_queue_lock);
 
 	/* libere memória da heap */
 	free(on_processor);
