@@ -165,7 +165,7 @@ void * potencia_yield(void *arg){
 void * potencia(void *arg){
 	struct potencia *cp = (struct potencia *)arg;
 	printf("potencia iniciou\n");
-	
+
 	pthread_mutex_lock(cp->mutex);
 	*(cp->var) = pow(*(cp->var), cp->pot);
 	pthread_mutex_unlock(cp->mutex);
@@ -193,7 +193,7 @@ void teste_duas_threads_um_core_yield(int desabilitar){
 		p2.pot = 3;
 		pt_init(1);
 		pt_spawn(3, potencia_yield, (void *)&p1); // 8^2 = 64
-		pt_spawn(4, potencia, (void *)&p2); // 2^3 = 8 
+		pt_spawn(4, potencia, (void *)&p2); // 2^3 = 8
 		pt_barrier();
 		pt_destroy();
 		pthread_mutex_destroy(&mutex);
@@ -218,5 +218,3 @@ int main(){
 
 	return 0;
 }
-
-
