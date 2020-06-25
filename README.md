@@ -18,3 +18,7 @@ To create a thread the user must pass the thread's priority, the function to be 
 ## Referencies
 
 * [1] [POSIX Threads Tutorial](https://computing.llnl.gov/tutorials/pthreads/)
+
+## :memo: Licença
+
+This project is under the MIT license. See the file [LICENSE](LICENSE) for more details.
